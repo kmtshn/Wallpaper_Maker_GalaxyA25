@@ -1,858 +1,843 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Download, Play, Square, Loader2, Settings2, Image as ImageIcon, Smartphone, AlertCircle, Upload, Trash2, Crop, Film } from 'lucide-react';
-
-// 出力解像度 (スマホ壁紙用 HD+ 縦長)
-const RESOLUTION = { width: 720, height: 1600 };
-
-// アニメーションのパラメータ初期値
-const DEFAULT_PARAMS = {
-  count: 16,
-  speed: 1,
-  size: 350,
-  backgroundColor: '#0f172a',
-  pattern: 'heartbeat',
-  yoyo: false,        // 往復ループ＆イージング
-  transparent: false, // 背景透過
-  uploadedImage: null, // 背景画像オブジェクト { dataUrl, width, height }
-  imageTransform: { scale: 1, x: 0, y: 0 }, // 画像の変形状態
-};
-
-// 1フレーム分のSVG文字列を生成する関数
-const getSvgStringForFrame = (time, params, activeTab, isExport = false) => {
-  const { count, size, backgroundColor, pattern, yoyo, transparent, uploadedImage, imageTransform } = params;
-  const { width, height } = RESOLUTION;
-  const cx_center = width / 2;
-  const cy_center = height / 2;
-  
-  // タブが「画像切り抜き(crop)」の時は、アニメーションパターンを強制的に無効にする
-  const effectivePattern = activeTab === 'crop' ? 'none' : pattern;
-  
-  let elements = [];
-  
-  // 背景の描画（透過ONのときは描画しない）
-  if (!transparent) {
-    if (uploadedImage) {
-      const { dataUrl, width: imgW, height: imgH } = uploadedImage;
-      const { scale, x, y } = imageTransform;
-      elements.push(`<image href="${dataUrl}" x="0" y="0" width="${imgW}" height="${imgH}" transform="translate(${x}, ${y}) scale(${scale})" />`);
-      // アニメーションがある場合のみ、見やすくするため背景色を半透明のオーバーレイとして重ねる
-      if (effectivePattern !== 'none') {
-        elements.push(`<rect width="${width}" height="${height}" fill="${backgroundColor}" opacity="0.4" />`);
-      }
-    } else {
-      elements.push(`<rect width="${width}" height="${height}" fill="${backgroundColor}" />`);
-    }
-  }
-
-  // ヨーヨーループ（往復＆イージング）の計算
-  let renderTime = time;
-  if (yoyo) {
-    renderTime = (1 - Math.cos(time)) * Math.PI;
-  }
-
-  // --- パターンごとの描画ロジック ---
-
-  if (effectivePattern === 'none') {
-    // 画像切り抜きのみの場合はアニメーション要素を描画しない
-  } else if (effectivePattern === 'geometric') {
-    for (let i = 0; i < count; i++) {
-      const offset = (i / count) * Math.PI * 2;
-      const radius = size * 0.5 + size * Math.sin(renderTime * 2 + offset); 
-      const cx = cx_center + radius * Math.cos(renderTime + offset);
-      const cy = cy_center + radius * Math.sin(renderTime + offset);
-      
-      const hue = (renderTime * 50 + i * (360 / count)) % 360;
-      const color = `hsl(${hue}, 80%, 65%)`;
-
-      elements.push(`<line x1="${cx_center}" y1="${cy_center}" x2="${cx}" y2="${cy}" stroke="${color}" stroke-width="3" opacity="0.4" />`);
-      elements.push(`<circle cx="${cx}" cy="${cy}" r="16" fill="${color}" opacity="0.9" />`);
-      elements.push(`<circle cx="${cx_center + (radius * 0.5) * Math.cos(renderTime - offset)}" cy="${cy_center + (radius * 0.5) * Math.sin(renderTime - offset)}" r="8" fill="${color}" opacity="0.6" />`);
-    }
-
-  } else if (effectivePattern === 'crazy_emojis') {
-    const emojis = ['🤪', '🛸', '💩', '🌭', '🦍', '💃', '👀', '🍌', '👻', '🐙', '👾', '🌈'];
-    for (let i = 0; i < count; i++) {
-      const emoji = emojis[i % emojis.length];
-      const freqX = (i % 3) + 1;
-      const freqY = (i % 4) + 1;
-      const phaseX = (i / count) * Math.PI * 2;
-      const phaseY = ((i + 1) / count) * Math.PI * 2;
-
-      const spreadX = size * 1.2;
-      const spreadY = size * 1.8;
-
-      const cx = cx_center + spreadX * Math.sin(renderTime * freqX + phaseX);
-      const cy = cy_center + spreadY * Math.cos(renderTime * freqY + phaseY);
-
-      const baseFontSize = Math.max(30, size / 5);
-      const fontSize = baseFontSize + (baseFontSize * 0.3) * Math.sin(renderTime * 3 + i);
-      const rotation = Math.sin(renderTime * 2 + phaseX) * 45;
-
-      elements.push(`<text x="${cx}" y="${cy}" font-size="${fontSize}" text-anchor="middle" dominant-baseline="central" transform="rotate(${rotation}, ${cx}, ${cy})">${emoji}</text>`);
-    }
-
-  } else if (effectivePattern === 'wiggly_tentacles') {
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const hue = (renderTime * 100 + i * (360 / count)) % 360;
-      const color = `hsl(${hue}, 80%, 65%)`;
-
-      const length = size * 1.5;
-      const tipAngle = angle + Math.sin(renderTime * 3 + i) * 0.5;
-      const endX = cx_center + length * Math.cos(tipAngle);
-      const endY = cy_center + length * Math.sin(tipAngle);
-
-      const cp1X = cx_center + (length * 0.4) * Math.cos(angle + Math.sin(renderTime * 4 + i));
-      const cp1Y = cy_center + (length * 0.4) * Math.sin(angle + Math.cos(renderTime * 4 + i));
-
-      const cp2X = cx_center + (length * 0.8) * Math.cos(angle - Math.sin(renderTime * 5 + i));
-      const cp2Y = cy_center + (length * 0.8) * Math.sin(angle - Math.cos(renderTime * 5 + i));
-
-      const thickness = Math.max(8, size / 10);
-
-      elements.push(`<path d="M ${cx_center} ${cy_center} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}" fill="none" stroke="${color}" stroke-width="${thickness}" stroke-linecap="round" opacity="0.9" />`);
-      
-      const eyeRadius = Math.max(12, thickness * 0.8);
-      const pupilRadius = eyeRadius * 0.4;
-      const pupilOffsetX = Math.cos(renderTime * 6 + i * 2) * (eyeRadius - pupilRadius - 2);
-      const pupilOffsetY = Math.sin(renderTime * 6 + i * 2) * (eyeRadius - pupilRadius - 2);
-
-      elements.push(`<circle cx="${endX}" cy="${endY}" r="${eyeRadius}" fill="white" />`);
-      elements.push(`<circle cx="${endX + pupilOffsetX}" cy="${endY + pupilOffsetY}" r="${pupilRadius}" fill="#0f172a" />`);
-    }
-
-  } else if (effectivePattern === 'expanding_ripples') {
-    const rippleCount = Math.max(3, Math.floor(count / 2));
-    for (let i = 0; i < rippleCount; i++) {
-      const phaseOffset = (i / rippleCount) * Math.PI * 2;
-      let phase = (renderTime * 2 + phaseOffset) % (Math.PI * 2);
-      const progress = phase / (Math.PI * 2);
-      
-      const r = size * progress * 1.5;
-      const opacity = Math.max(0, 1 - progress);
-      const strokeWidth = size * 0.02 + progress * size * 0.05;
-      
-      elements.push(`<circle cx="${cx_center}" cy="${cy_center}" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="${strokeWidth}" opacity="${opacity}" />`);
-    }
-
-  } else if (effectivePattern === 'loading_dots') {
-    const dots = 3;
-    const dotSpacing = size * 0.5;
-    const startX = cx_center - dotSpacing;
-    const baseColor = transparent ? '#334155' : '#e2e8f0'; 
-
-    for (let i = 0; i < dots; i++) {
-      const delay = i * 0.5;
-      const jumpProgress = (renderTime * 3 - delay) % (Math.PI * 2);
-      let jump = 0;
-      if (jumpProgress > 0 && jumpProgress < Math.PI) {
-        jump = Math.sin(jumpProgress);
-      }
-      
-      const cx = startX + i * dotSpacing;
-      const cy = cy_center - jump * (size * 0.6);
-      const dotRadius = size * 0.15;
-      
-      elements.push(`<circle cx="${cx}" cy="${cy}" r="${dotRadius}" fill="${baseColor}" />`);
-    }
-
-  } else if (effectivePattern === 'heartbeat') {
-    const t = (renderTime % (Math.PI * 2));
-    let scale = 1;
-    if (t < 0.8) {
-      scale = 1 + Math.sin(t * (Math.PI / 0.8)) * 0.25;
-    } else if (t > 1.0 && t < 1.6) {
-      scale = 1 + Math.sin((t - 1.0) * (Math.PI / 0.6)) * 0.15;
-    }
-    
-    const heartScale = size * 0.03 * scale;
-    elements.push(`
-      <g transform="translate(${cx_center}, ${cy_center}) scale(${heartScale})">
-        <path d="M 0 -15 C 0 -15 -15 -30 -30 -15 C -45 0 -15 30 0 50 C 15 30 45 0 30 -15 C 15 -30 0 -15 0 -15 Z" fill="#ef4444" />
-      </g>
-    `);
-
-  } else if (effectivePattern === 'character_breathing') {
-    const breathY = Math.sin(renderTime * 2) * (size * 0.08); 
-    const isBlinking = (renderTime > 1.0 && renderTime < 1.3) || (renderTime > 4.5 && renderTime < 4.7);
-    
-    const eyeHeight = isBlinking ? 2 : size * 0.12;
-    const eyeWidth = size * 0.08;
-    const faceColor = '#fcd34d'; 
-    const featureColor = '#1e293b';
-    
-    elements.push(`
-      <g transform="translate(${cx_center}, ${cy_center + breathY})">
-        <circle cx="0" cy="0" r="${size * 0.6}" fill="${faceColor}" />
-        <ellipse cx="-${size * 0.3}" cy="${size * 0.1}" rx="${size * 0.1}" ry="${size * 0.06}" fill="#fbbf24" opacity="0.6"/>
-        <ellipse cx="${size * 0.3}" cy="${size * 0.1}" rx="${size * 0.1}" ry="${size * 0.06}" fill="#fbbf24" opacity="0.6"/>
-        <ellipse cx="-${size * 0.25}" cy="-${size * 0.1}" rx="${eyeWidth}" ry="${eyeHeight}" fill="${featureColor}" />
-        <ellipse cx="${size * 0.25}" cy="-${size * 0.1}" rx="${eyeWidth}" ry="${eyeHeight}" fill="${featureColor}" />
-        <path d="M -${size * 0.15} ${size * 0.15} Q 0 ${size * 0.35} ${size * 0.15} ${size * 0.15}" fill="none" stroke="${featureColor}" stroke-width="${size * 0.03}" stroke-linecap="round" />
-      </g>
-    `);
-  }
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%">${elements.join('')}</svg>`;
-};
-
-export default function App() {
-  const [activeTab, setActiveTab] = useState('crop'); // 'crop' or 'animate'
-  const [params, setParams] = useState(DEFAULT_PARAMS);
-  const [time, setTime] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [isRecording, setIsRecording] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [gifUrl, setGifUrl] = useState(null);
-  const [statusText, setStatusText] = useState('');
-  
-  const animationRef = useRef(null);
-  const previewContainerRef = useRef(null);
-
-  const isDraggingRef = useRef(false);
-  const startPosRef = useRef({ x: 0, y: 0 });
-
-  // ライブプレビューのアニメーションループ
-  useEffect(() => {
-    // クロップタブの時はアニメーションを停止してリソースを節約
-    if (!isPlaying || isRecording || activeTab === 'crop') return;
-
-    let lastTime = performance.now();
-    const loop = (currentTime) => {
-      const deltaTime = (currentTime - lastTime) / 1000;
-      lastTime = currentTime;
-      
-      setTime((prevTime) => {
-        const baseSpeed = Math.PI; 
-        let nextTime = prevTime + deltaTime * baseSpeed * params.speed;
-        if (nextTime > Math.PI * 2) nextTime -= Math.PI * 2;
-        return nextTime;
-      });
-      
-      animationRef.current = requestAnimationFrame(loop);
-    };
-
-    animationRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, isRecording, params.speed, activeTab]);
-
-  // プレビュー上でのドラッグ操作ハンドラ
-  const handlePointerDown = (e) => {
-    if (!params.uploadedImage || isRecording) return;
-    isDraggingRef.current = true;
-    startPosRef.current = { x: e.clientX, y: e.clientY };
-    e.target.setPointerCapture(e.pointerId);
-  };
-
-  const handlePointerMove = (e) => {
-    if (!isDraggingRef.current) return;
-    const dx = e.clientX - startPosRef.current.x;
-    const dy = e.clientY - startPosRef.current.y;
-    startPosRef.current = { x: e.clientX, y: e.clientY };
-
-    if (previewContainerRef.current) {
-      const rect = previewContainerRef.current.getBoundingClientRect();
-      const displayRatio = RESOLUTION.width / rect.width;
-      
-      setParams(prev => ({
-        ...prev,
-        imageTransform: {
-          ...prev.imageTransform,
-          x: prev.imageTransform.x + dx * displayRatio,
-          y: prev.imageTransform.y + dy * displayRatio
-        }
-      }));
-    }
-  };
-
-  const handlePointerUp = (e) => {
-    if (isDraggingRef.current) {
-      isDraggingRef.current = false;
-      e.target.releasePointerCapture(e.pointerId);
-    }
-  };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-
-    img.onload = () => {
-      const MAX_SIZE = 2000;
-      let targetWidth = img.width;
-      let targetHeight = img.height;
-      
-      if (targetWidth > MAX_SIZE || targetHeight > MAX_SIZE) {
-        if (targetWidth > targetHeight) {
-          targetHeight *= MAX_SIZE / targetWidth;
-          targetWidth = MAX_SIZE;
-        } else {
-          targetWidth *= MAX_SIZE / targetHeight;
-          targetHeight = MAX_SIZE;
-        }
-      }
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
-      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-      
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      
-      const initialScale = Math.max(RESOLUTION.width / targetWidth, RESOLUTION.height / targetHeight);
-      const initialX = (RESOLUTION.width - targetWidth * initialScale) / 2;
-      const initialY = (RESOLUTION.height - targetHeight * initialScale) / 2;
-
-      setParams(prev => ({ 
-        ...prev, 
-        uploadedImage: { dataUrl, width: targetWidth, height: targetHeight },
-        imageTransform: { scale: initialScale, x: initialX, y: initialY }
-      }));
-      URL.revokeObjectURL(objectUrl);
-    };
-
-    img.src = objectUrl;
-    e.target.value = '';
-  };
-
-  const removeBackgroundImage = () => {
-    setParams(prev => ({ 
-      ...prev, 
-      uploadedImage: null, 
-      imageTransform: { scale: 1, x: 0, y: 0 }
-    }));
-  };
-
-  // プレビュー用SVGの更新
-  useEffect(() => {
-    if (previewContainerRef.current) {
-      previewContainerRef.current.innerHTML = getSvgStringForFrame(time, params, activeTab, false);
-    }
-  }, [time, params, activeTab]);
-
-  // タブ切り替え時に生成済み画像をリセット
-  useEffect(() => {
-    setGifUrl(null);
-    setStatusText('');
-    setProgress(0);
-  }, [activeTab]);
-
-
-  // JPEGエクスポート処理（画像切り抜き用）
-  const exportJPEG = async () => {
-    setIsRecording(true);
-    setStatusText('JPEGを生成中...');
-    setGifUrl(null);
-
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = RESOLUTION.width;
-      canvas.height = RESOLUTION.height;
-      const ctx = canvas.getContext('2d');
-
-      const svgString = getSvgStringForFrame(0, params, 'crop', true); 
-      
-      const img = new Image();
-      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = url;
-      });
-
-      ctx.clearRect(0, 0, RESOLUTION.width, RESOLUTION.height);
-      ctx.drawImage(img, 0, 0, RESOLUTION.width, RESOLUTION.height);
-
-      const jpegUrl = canvas.toDataURL('image/jpeg', 0.95);
-      setGifUrl(jpegUrl);
-      setIsRecording(false);
-      setStatusText('完成しました！');
-      
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('JPEG生成エラー:', error);
-      setStatusText('エラーが発生しました');
-      setIsRecording(false);
-    }
-  };
-
-  // GIFの生成処理
-  const generateGIF = async () => {
-    setIsRecording(true);
-    setProgress(0);
-    setStatusText('ライブラリを読み込み中...');
-    setGifUrl(null);
-
-    try {
-      if (!window.GIF) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://cdn.jsdelivr.net/npm/gif.js.optimized@1.0.1/dist/gif.js';
-          script.onload = resolve;
-          script.onerror = reject;
-          document.head.appendChild(script);
-        });
-      }
-
-      const workerRes = await fetch('https://cdn.jsdelivr.net/npm/gif.js.optimized@1.0.1/dist/gif.worker.js');
-      const workerText = await workerRes.text();
-      const workerBlob = new Blob([workerText], { type: 'application/javascript' });
-      const workerUrl = URL.createObjectURL(workerBlob);
-
-      const chromaKeyColor = '#00FF00';
-
-      const gif = new window.GIF({
-        workers: 2,
-        quality: 10,
-        width: RESOLUTION.width,
-        height: RESOLUTION.height,
-        workerScript: workerUrl,
-        transparent: params.transparent ? chromaKeyColor : null,
-      });
-
-      const canvas = document.createElement('canvas');
-      canvas.width = RESOLUTION.width;
-      canvas.height = RESOLUTION.height;
-      const ctx = canvas.getContext('2d');
-
-      const duration = 2 / params.speed;
-      let fps = 30;
-      if (duration > 5) fps = 15;
-      if (duration > 10) fps = 10;
-      
-      const totalFrames = Math.round(fps * duration);
-
-      setStatusText('フレームを描画中...');
-
-      for (let i = 0; i < totalFrames; i++) {
-        const frameTime = (i / totalFrames) * Math.PI * 2;
-        const svgString = getSvgStringForFrame(frameTime, params, 'animate', true);
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スマホ壁紙メーカー</title>
+    <!-- Tailwind CSS の読み込み -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons の読み込み -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- GIF.js の読み込み -->
+    <script src="https://cdn.jsdelivr.net/npm/gif.js.optimized@1.0.1/dist/gif.js"></script>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 p-6 font-sans">
+    <div id="app" class="max-w-4xl mx-auto space-y-6">
         
-        const img = new Image();
-        const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(svgBlob);
-
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-          img.src = url;
-        });
-
-        if (params.transparent) {
-          ctx.fillStyle = chromaKeyColor;
-          ctx.fillRect(0, 0, RESOLUTION.width, RESOLUTION.height);
-        } else {
-          ctx.clearRect(0, 0, RESOLUTION.width, RESOLUTION.height);
-        }
-        
-        ctx.drawImage(img, 0, 0, RESOLUTION.width, RESOLUTION.height);
-        gif.addFrame(ctx, { copy: true, delay: 1000 / fps });
-        
-        URL.revokeObjectURL(url);
-        setProgress(Math.round(((i + 1) / totalFrames) * 40));
-      }
-
-      setStatusText('GIFをエンコード中...');
-
-      gif.on('progress', (p) => {
-        setProgress(40 + Math.round(p * 60));
-      });
-
-      gif.on('finished', (blob) => {
-        const url = URL.createObjectURL(blob);
-        setGifUrl(url);
-        setIsRecording(false);
-        setStatusText('完成しました！');
-      });
-
-      gif.render();
-
-    } catch (error) {
-      console.error('GIF生成エラー:', error);
-      setStatusText('エラーが発生しました');
-      setIsRecording(false);
-    }
-  };
-
-  const handleParamChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    if (type === 'checkbox') {
-      setParams(prev => ({ ...prev, [name]: checked }));
-    } else {
-      const parsedValue = name === 'pattern' || name === 'backgroundColor' ? value : parseFloat(value);
-      setParams(prev => ({ ...prev, [name]: parsedValue }));
-    }
-  };
-
-  const checkerboardStyle = {
-    backgroundImage: `linear-gradient(45deg, #334155 25%, transparent 25%), linear-gradient(-45deg, #334155 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #334155 75%), linear-gradient(-45deg, transparent 75%, #334155 75%)`,
-    backgroundSize: `20px 20px`,
-    backgroundPosition: `0 0, 0 10px, 10px -10px, -10px 0px`
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 p-6 font-sans">
-      <div className="max-w-4xl mx-auto space-y-6">
-        
-        <header className="mb-6">
-          <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
-            <Smartphone className="text-indigo-600" size={32} />
-            スマホ壁紙メーカー
-          </h1>
-          <p className="text-slate-600 mt-2">
-            手持ちの画像をスマホサイズに綺麗に切り抜いたり、動く壁紙(GIF)を作成できます。
-          </p>
+        <!-- Header -->
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-slate-900 flex items-center gap-3">
+                <i data-lucide="smartphone" class="text-indigo-600 w-8 h-8"></i>
+                スマホ壁紙メーカー
+            </h1>
+            <p class="text-slate-600 mt-2">
+                手持ちの画像をスマホサイズに綺麗に切り抜いたり、動く壁紙(GIF)を作成できます。
+            </p>
         </header>
 
-        {/* タブ切り替えUI */}
-        <div className="flex bg-slate-200/50 p-1.5 rounded-xl mb-8 border border-slate-200">
-          <button
-            onClick={() => setActiveTab('crop')}
-            disabled={isRecording}
-            className={`flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all ${
-              activeTab === 'crop' 
-                ? 'bg-white text-emerald-600 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
-            }`}
-          >
-            <Crop size={20} />
-            画像切り抜き (メイン)
-          </button>
-          <button
-            onClick={() => setActiveTab('animate')}
-            disabled={isRecording}
-            className={`flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all ${
-              activeTab === 'animate' 
-                ? 'bg-white text-indigo-600 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
-            }`}
-          >
-            <Film size={20} />
-            GIFアニメ作成
-          </button>
+        <!-- Tabs -->
+        <div class="flex bg-slate-200/50 p-1.5 rounded-xl mb-8 border border-slate-200">
+            <button id="btn-tab-crop" class="flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all bg-white text-emerald-600 shadow-sm">
+                <i data-lucide="crop" class="w-5 h-5"></i>
+                画像切り抜き (メイン)
+            </button>
+            <button id="btn-tab-animate" class="flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all text-slate-500 hover:text-slate-700 hover:bg-white/50">
+                <i data-lucide="film" class="w-5 h-5"></i>
+                GIFアニメ作成
+            </button>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-8">
-          {/* 左側：プレビューと操作パネル */}
-          <div className="space-y-6">
-            
-            {/* プレビュー画面 */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
-                <span className="font-semibold text-sm text-slate-700">プレビュー</span>
+        <div class="grid md:grid-cols-2 gap-8">
+            <!-- 左側：プレビューと操作パネル -->
+            <div class="space-y-6">
                 
-                {/* アニメーションモード時のみ再生ボタンを表示 */}
-                {activeTab === 'animate' && (
-                  <button 
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    disabled={isRecording}
-                    className="p-2 bg-white rounded-md shadow-sm border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-50"
-                  >
-                    {isPlaying ? <Square size={16} /> : <Play size={16} />}
-                  </button>
-                )}
-              </div>
-              <div className="w-full flex justify-center items-center p-6 bg-slate-800">
-                <div 
-                  ref={previewContainerRef} 
-                  className={`w-full shadow-2xl rounded-[2.5rem] border-[12px] border-slate-900 overflow-hidden relative select-none ${params.uploadedImage ? 'cursor-move touch-none' : ''}`}
-                  style={{ 
-                    aspectRatio: `${RESOLUTION.width}/${RESOLUTION.height}`, 
-                    maxWidth: '280px',
-                    backgroundColor: (params.transparent && activeTab === 'animate') ? 'transparent' : 'black',
-                    ...((params.transparent && activeTab === 'animate') ? checkerboardStyle : {})
-                  }}
-                  onPointerDown={handlePointerDown}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                  onPointerCancel={handlePointerUp}
-                />
-              </div>
-            </div>
-
-            {/* 左下：設定パネル (タブに応じて完全切り替え) */}
-            {activeTab === 'crop' ? (
-              // ----------------------------------------
-              // 1. 画像切り抜きモード用の設定パネル
-              // ----------------------------------------
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
-                <h2 className="font-semibold flex items-center gap-2 mb-4 text-emerald-800">
-                  <Crop size={18} />
-                  画像を切り抜く
-                </h2>
-                <div className="space-y-4">
-                  <p className="text-sm text-slate-600">
-                    お手持ちの写真をアップロードして、ドラッグやズームで位置を調整してください。
-                  </p>
-                  
-                  <div className="flex flex-col gap-3">
-                    <label className={`w-full flex justify-center items-center gap-2 cursor-pointer ${params.uploadedImage ? 'bg-white border-2 border-emerald-500 text-emerald-600' : 'bg-emerald-600 text-white hover:bg-emerald-700'} py-4 px-4 rounded-xl font-bold transition-colors ${isRecording ? 'opacity-50 pointer-events-none' : ''}`}>
-                      <Upload size={20} />
-                      <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={isRecording} />
-                      {params.uploadedImage ? '別の画像をアップロード' : '画像を選ぶ (スマホから)'}
-                    </label>
-                    
-                    {params.uploadedImage && (
-                      <button 
-                        onClick={removeBackgroundImage} 
-                        disabled={isRecording} 
-                        className="flex justify-center items-center gap-2 py-3 px-4 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-medium transition-colors"
-                      >
-                         <Trash2 size={18} />
-                         画像をクリアする
-                      </button>
-                    )}
-                  </div>
-
-                  {params.uploadedImage && (
-                    <div className="mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-xl space-y-4">
-                      <p className="text-sm text-emerald-800 font-bold flex items-center gap-2">
-                        <span>💡</span>
-                        上のプレビュー画面を直接ドラッグして、位置を動かせます。
-                      </p>
-                      <label className="block">
-                        <span className="text-sm font-medium text-slate-700">ズーム（拡大・縮小）</span>
-                        <input 
-                          type="range" 
-                          min={Math.max(RESOLUTION.width / params.uploadedImage.width, RESOLUTION.height / params.uploadedImage.height) * 0.2} 
-                          max={Math.max(RESOLUTION.width / params.uploadedImage.width, RESOLUTION.height / params.uploadedImage.height) * 3} 
-                          step="0.01" 
-                          value={params.imageTransform.scale} 
-                          onChange={(e) => {
-                            const newScale = parseFloat(e.target.value);
-                            const cx = (RESOLUTION.width / 2 - params.imageTransform.x) / params.imageTransform.scale;
-                            const cy = (RESOLUTION.height / 2 - params.imageTransform.y) / params.imageTransform.scale;
-                            const newX = RESOLUTION.width / 2 - cx * newScale;
-                            const newY = RESOLUTION.height / 2 - cy * newScale;
-                            setParams(prev => ({
-                              ...prev,
-                              imageTransform: { scale: newScale, x: newX, y: newY }
-                            }));
-                          }}
-                          disabled={isRecording}
-                          className="w-full mt-2 accent-emerald-600" 
-                        />
-                      </label>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              // ----------------------------------------
-              // 2. GIFアニメ作成モード用の設定パネル
-              // ----------------------------------------
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
-                <h2 className="font-semibold flex items-center gap-2 mb-2 text-indigo-800">
-                  <Settings2 size={18} />
-                  アニメーション設定
-                </h2>
-                
-                <div className="space-y-4">
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">パターン</span>
-                    <select
-                      name="pattern"
-                      value={params.pattern}
-                      onChange={handleParamChange}
-                      disabled={isRecording}
-                      className="w-full mt-1 bg-white border border-slate-300 text-slate-700 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <optgroup label="UI・インジケーター系">
-                        <option value="heartbeat">心拍（ハートビート）</option>
-                        <option value="loading_dots">ローディング・ドット</option>
-                      </optgroup>
-                      <optgroup label="キャラクター・生き物系">
-                        <option value="character_breathing">まばたきと呼吸</option>
-                        <option value="wiggly_tentacles">ぐにゃぐにゃモンスター</option>
-                        <option value="crazy_emojis">クレイジー絵文字</option>
-                      </optgroup>
-                      <optgroup label="幾何学・ミニマル系">
-                        <option value="expanding_ripples">拡大する波紋</option>
-                        <option value="geometric">幾何学模様</option>
-                      </optgroup>
-                    </select>
-                  </label>
-
-                  <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-lg space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input 
-                        type="checkbox" name="yoyo" 
-                        checked={params.yoyo} onChange={handleParamChange}
-                        disabled={isRecording}
-                        className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" 
-                      />
-                      <div>
-                        <span className="block text-sm font-semibold text-indigo-900">ヨーヨー往復＆イージング</span>
-                        <span className="block text-xs text-indigo-700">滑らかに減速しながら逆再生します。継ぎ目対策に！</span>
-                      </div>
-                    </label>
-                    
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input 
-                        type="checkbox" name="transparent" 
-                        checked={params.transparent} onChange={handleParamChange}
-                        disabled={isRecording}
-                        className="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" 
-                      />
-                      <div>
-                        <span className="block text-sm font-semibold text-indigo-900">背景を透過する</span>
-                        <span className="block text-xs text-indigo-700">Webサイトの素材などで背景を透明にしたい時に。</span>
-                      </div>
-                    </label>
-                  </div>
-
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">要素の数 (パターンによる): {params.count}</span>
-                    <input 
-                      type="range" name="count" min="3" max="30" step="1" 
-                      value={params.count} onChange={handleParamChange}
-                      disabled={isRecording}
-                      className="w-full mt-1 accent-indigo-600" 
-                    />
-                  </label>
-                  
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">サイズ・広がり具合: {params.size}</span>
-                    <input 
-                      type="range" name="size" min="100" max="800" step="10" 
-                      value={params.size} onChange={handleParamChange}
-                      disabled={isRecording}
-                      className="w-full mt-1 accent-indigo-600" 
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="text-sm font-medium text-slate-700">再生スピード: {params.speed.toFixed(1)}x</span>
-                    <input 
-                      type="range" name="speed" min="0.1" max="3" step="0.1" 
-                      value={params.speed} onChange={handleParamChange}
-                      disabled={isRecording}
-                      className="w-full mt-1 accent-indigo-600" 
-                    />
-                  </label>
-
-                  <div className="pt-4 border-t border-slate-200">
-                    <span className="block text-sm font-medium text-slate-700 mb-2">背景画像 (任意)</span>
-                    <div className="flex items-center gap-2">
-                      <label className={`flex-1 flex justify-center items-center gap-2 cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-center py-2 px-3 rounded-md transition-colors text-sm font-medium ${isRecording ? 'opacity-50 pointer-events-none' : ''}`}>
-                        <Upload size={16} />
-                        <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={isRecording} />
-                        {params.uploadedImage ? '画像を変更' : '画像をアップロード'}
-                      </label>
-                      {params.uploadedImage && (
-                        <button 
-                          onClick={removeBackgroundImage} 
-                          disabled={isRecording} 
-                          className="p-2 text-red-500 bg-white hover:bg-red-50 rounded-md border border-slate-300 hover:border-red-200 transition-colors"
-                        >
-                           <Trash2 size={18} />
+                <!-- プレビュー画面 -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
+                        <span class="font-semibold text-sm text-slate-700">プレビュー</span>
+                        <button id="btn-play-pause" class="hidden p-2 bg-white rounded-md shadow-sm border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-50">
+                            <i data-lucide="square" id="icon-pause" class="w-4 h-4"></i>
+                            <i data-lucide="play" id="icon-play" class="w-4 h-4 hidden"></i>
                         </button>
-                      )}
                     </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 右側：出力・生成パネル (タブに応じて切り替え) */}
-          <div className="space-y-6">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h2 className="font-semibold text-lg mb-4">
-                {activeTab === 'crop' ? '壁紙として保存' : '動く壁紙・素材GIFを生成'}
-              </h2>
-              <p className="text-sm text-slate-600 mb-4">
-                {activeTab === 'crop' 
-                  ? 'プレビューの状態で、スマホにぴったりなHD+サイズ（720×1600）の高画質JPEGとして保存します。' 
-                  : '現在のデザインをもとに、完璧にループするGIFアニメーションを生成します。'}
-              </p>
-
-              {activeTab === 'animate' && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6 flex items-start gap-3">
-                  <AlertCircle className="text-amber-500 shrink-0 mt-0.5" size={18} />
-                  <p className="text-sm text-amber-800">
-                    HD+のフル解像度でGIFを作るため、ブラウザの処理に時間がかかります。スマホでの生成時はご注意ください。
-                  </p>
-                </div>
-              )}
-
-              <button
-                onClick={activeTab === 'crop' ? exportJPEG : generateGIF}
-                disabled={isRecording || (activeTab === 'crop' && !params.uploadedImage)}
-                className={`w-full flex items-center justify-center gap-2 text-white font-bold py-4 px-4 rounded-xl transition-colors disabled:opacity-50 ${
-                  activeTab === 'crop' 
-                    ? 'bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20' 
-                    : 'bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-600/20'
-                }`}
-              >
-                {isRecording ? (
-                  <>
-                    <Loader2 className="animate-spin" size={20} />
-                    {activeTab === 'crop' ? '生成中...' : `生成中... ${progress}%`}
-                  </>
-                ) : (
-                  <>
-                    {activeTab === 'crop' ? <Download size={20} /> : <Play size={20} />}
-                    {activeTab === 'crop' ? 'JPEGとして保存' : 'GIFを生成する'}
-                  </>
-                )}
-              </button>
-
-              {isRecording && (
-                <div className="mt-4">
-                  <div className="flex justify-between text-xs text-slate-500 mb-1">
-                    <span>{statusText}</span>
-                    {activeTab === 'animate' && <span>{progress}%</span>}
-                  </div>
-                  {activeTab === 'animate' && (
-                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                      <div 
-                        className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${progress}%` }}
-                      />
+                    <div class="w-full flex justify-center items-center p-6 bg-slate-800">
+                        <div id="preview-container" class="w-full shadow-2xl rounded-[2.5rem] border-[12px] border-slate-900 overflow-hidden relative select-none" style="aspect-ratio: 720/1600; max-width: 280px; background-color: black;">
+                            <!-- SVGがJSから挿入されます -->
+                        </div>
                     </div>
-                  )}
                 </div>
-              )}
+
+                <!-- 1. 画像切り抜きモード用の設定パネル -->
+                <div id="panel-crop" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
+                    <h2 class="font-semibold flex items-center gap-2 mb-4 text-emerald-800">
+                        <i data-lucide="crop" class="w-4 h-4"></i>
+                        画像を切り抜く
+                    </h2>
+                    <div class="space-y-4">
+                        <p class="text-sm text-slate-600">
+                            お手持ちの写真をアップロードして、ドラッグやズームで位置を調整してください。
+                        </p>
+                        <div class="flex flex-col gap-3">
+                            <label id="label-upload-crop" class="w-full flex justify-center items-center gap-2 cursor-pointer py-4 px-4 rounded-xl font-bold transition-colors bg-emerald-600 text-white hover:bg-emerald-700">
+                                <i data-lucide="upload" class="w-5 h-5"></i>
+                                <input type="file" accept="image/*" class="hidden input-image" id="input-image-crop" />
+                                <span id="text-upload-crop">画像を選ぶ (スマホから)</span>
+                            </label>
+                            <button id="btn-clear-image-crop" class="hidden flex justify-center items-center gap-2 py-3 px-4 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-medium transition-colors">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                画像をクリアする
+                            </button>
+                        </div>
+                        <div id="crop-zoom-ui" class="hidden mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-xl space-y-4">
+                            <p class="text-sm text-emerald-800 font-bold flex items-center gap-2">
+                                <span>💡</span>上のプレビュー画面を直接ドラッグして位置を動かせます。
+                            </p>
+                            <label class="block">
+                                <span class="text-sm font-medium text-slate-700">ズーム（拡大・縮小）</span>
+                                <input type="range" id="input-scale-crop" min="0.2" max="3" step="0.01" value="1" class="w-full mt-2 accent-emerald-600" />
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. GIFアニメ作成モード用の設定パネル -->
+                <div id="panel-animate" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
+                    <h2 class="font-semibold flex items-center gap-2 mb-2 text-indigo-800">
+                        <i data-lucide="settings-2" class="w-4 h-4"></i>
+                        アニメーション設定
+                    </h2>
+                    <div class="space-y-4">
+                        <label class="block">
+                            <span class="text-sm font-medium text-slate-700">パターン</span>
+                            <select id="select-pattern" class="w-full mt-1 bg-white border border-slate-300 text-slate-700 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <optgroup label="UI・インジケーター系">
+                                    <option value="heartbeat" selected>心拍（ハートビート）</option>
+                                    <option value="loading_dots">ローディング・ドット</option>
+                                </optgroup>
+                                <optgroup label="キャラクター・生き物系">
+                                    <option value="character_breathing">まばたきと呼吸</option>
+                                    <option value="wiggly_tentacles">ぐにゃぐにゃモンスター</option>
+                                    <option value="crazy_emojis">クレイジー絵文字</option>
+                                </optgroup>
+                                <optgroup label="幾何学・ミニマル系">
+                                    <option value="expanding_ripples">拡大する波紋</option>
+                                    <option value="geometric">幾何学模様</option>
+                                </optgroup>
+                            </select>
+                        </label>
+
+                        <div class="p-3 bg-indigo-50 border border-indigo-100 rounded-lg space-y-3">
+                            <label class="flex items-center gap-3 cursor-pointer">
+                                <input type="checkbox" id="check-yoyo" class="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                                <div>
+                                    <span class="block text-sm font-semibold text-indigo-900">ヨーヨー往復＆イージング</span>
+                                    <span class="block text-xs text-indigo-700">滑らかに減速しながら逆再生します。継ぎ目対策に！</span>
+                                </div>
+                            </label>
+                            <label class="flex items-center gap-3 cursor-pointer">
+                                <input type="checkbox" id="check-transparent" class="w-5 h-5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500" />
+                                <div>
+                                    <span class="block text-sm font-semibold text-indigo-900">背景を透過する</span>
+                                    <span class="block text-xs text-indigo-700">Webサイトの素材などで背景を透明にしたい時に。</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <label class="block">
+                            <span class="text-sm font-medium text-slate-700">要素の数 (パターンによる): <span id="label-count">16</span></span>
+                            <input type="range" id="input-count" min="3" max="30" step="1" value="16" class="w-full mt-1 accent-indigo-600" />
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-slate-700">サイズ・広がり具合: <span id="label-size">350</span></span>
+                            <input type="range" id="input-size" min="100" max="800" step="10" value="350" class="w-full mt-1 accent-indigo-600" />
+                        </label>
+                        <label class="block">
+                            <span class="text-sm font-medium text-slate-700">再生スピード: <span id="label-speed">1.0x</span></span>
+                            <input type="range" id="input-speed" min="0.1" max="3" step="0.1" value="1" class="w-full mt-1 accent-indigo-600" />
+                        </label>
+
+                        <div class="pt-4 border-t border-slate-200">
+                            <span class="block text-sm font-medium text-slate-700 mb-2">背景画像 (任意)</span>
+                            <div class="flex items-center gap-2">
+                                <label id="label-upload-animate" class="flex-1 flex justify-center items-center gap-2 cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-center py-2 px-3 rounded-md transition-colors text-sm font-medium">
+                                    <i data-lucide="upload" class="w-4 h-4"></i>
+                                    <input type="file" accept="image/*" class="hidden input-image" id="input-image-animate" />
+                                    <span id="text-upload-animate">画像をアップロード</span>
+                                </label>
+                                <button id="btn-clear-image-animate" class="hidden p-2 text-red-500 bg-white hover:bg-red-50 rounded-md border border-slate-300 hover:border-red-200 transition-colors">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            {/* 完成した画像のプレビューエリア */}
-            <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all duration-500 ${gifUrl ? 'opacity-100 translate-y-0' : 'opacity-50 translate-y-4 pointer-events-none'}`}>
-              <div className="p-4 bg-slate-100 border-b border-slate-200">
-                <span className="font-semibold text-sm text-slate-700">完成した画像</span>
-              </div>
-              <div className="p-6 flex flex-col items-center gap-6" style={(params.transparent && activeTab === 'animate') ? checkerboardStyle : {}}>
-                {gifUrl ? (
-                  <>
-                    <img src={gifUrl} alt="Generated Output" className="w-full max-w-[200px] rounded-[2rem] shadow-md border border-slate-200 bg-white/50" />
-                    <a
-                      href={gifUrl}
-                      download={activeTab === 'crop' ? "wallpaper.jpg" : "animation.gif"}
-                      className={`flex items-center gap-2 text-white py-3 px-8 rounded-xl font-bold transition-colors shadow-md ${
-                        activeTab === 'crop' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20' : 'bg-slate-900 hover:bg-slate-800 shadow-slate-900/20'
-                      }`}
-                    >
-                      <Download size={18} />
-                      ダウンロード
-                    </a>
-                  </>
-                ) : (
-                  <div className="w-full max-w-[300px] aspect-square bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center text-slate-400 gap-2">
-                    <ImageIcon size={48} opacity={0.5} />
-                    <span className="text-sm font-medium">ここに完成画像が表示されます</span>
-                  </div>
-                )}
-              </div>
-            </div>
+            <!-- 右側：出力・生成パネル (タブに応じて切り替え) -->
+            <div class="space-y-6">
+                <!-- Export Panel -->
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                    <div id="export-crop-ui">
+                        <h2 class="font-semibold text-lg mb-4">壁紙として保存</h2>
+                        <p class="text-sm text-slate-600 mb-4">プレビューの状態で、スマホにぴったりなHD+サイズ（720×1600）の高画質JPEGとして保存します。</p>
+                        <button id="btn-export-crop" disabled class="w-full flex items-center justify-center gap-2 text-white font-bold py-4 px-4 rounded-xl transition-colors disabled:opacity-50 bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20">
+                            <div id="export-crop-default" class="flex items-center justify-center gap-2">
+                                <i data-lucide="download" class="w-5 h-5"></i>
+                                JPEGとして保存
+                            </div>
+                            <div id="export-crop-loading" class="hidden flex items-center justify-center gap-2">
+                                <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                                生成中...
+                            </div>
+                        </button>
+                    </div>
 
-          </div>
+                    <div id="export-animate-ui" class="hidden">
+                        <h2 class="font-semibold text-lg mb-4">動く壁紙・素材GIFを生成</h2>
+                        <p class="text-sm text-slate-600 mb-4">現在のデザインをもとに、完璧にループするGIFアニメーションを生成します。</p>
+                        <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6 flex items-start gap-3">
+                            <i data-lucide="alert-circle" class="text-amber-500 shrink-0 mt-0.5 w-4 h-4"></i>
+                            <p class="text-sm text-amber-800">HD+のフル解像度でGIFを作るため、ブラウザの処理に時間がかかります。スマホでの生成時はご注意ください。</p>
+                        </div>
+                        <button id="btn-export-animate" class="w-full flex items-center justify-center gap-2 text-white font-bold py-4 px-4 rounded-xl transition-colors disabled:opacity-50 bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-600/20">
+                            <div id="export-animate-default" class="flex items-center justify-center gap-2">
+                                <i data-lucide="play" class="w-5 h-5"></i>
+                                GIFを生成する
+                            </div>
+                            <div id="export-animate-loading" class="hidden flex items-center justify-center gap-2">
+                                <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                                <span id="animate-loading-text">生成中...</span>
+                            </div>
+                        </button>
+                    </div>
+
+                    <!-- Progress Section -->
+                    <div id="progress-section" class="mt-4 hidden">
+                        <div class="flex justify-between text-xs text-slate-500 mb-1">
+                            <span id="status-text"></span>
+                            <span id="progress-text"></span>
+                        </div>
+                        <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden" id="progress-bar-wrapper">
+                            <div id="progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Preview -->
+                <div id="result-container" class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all duration-500 opacity-50 translate-y-4 pointer-events-none">
+                    <div class="p-4 bg-slate-100 border-b border-slate-200">
+                        <span class="font-semibold text-sm text-slate-700">完成した画像</span>
+                    </div>
+                    <div id="result-preview-area" class="p-6 flex flex-col items-center gap-6">
+                        <img id="result-image" src="" alt="Generated Output" class="hidden w-full max-w-[200px] rounded-[2rem] shadow-md border border-slate-200 bg-white/50" />
+                        <a id="btn-download" href="#" download="" class="hidden flex items-center gap-2 text-white py-3 px-8 rounded-xl font-bold transition-colors shadow-md bg-slate-900 hover:bg-slate-800 shadow-slate-900/20">
+                            <i data-lucide="download" class="w-4 h-4"></i>
+                            ダウンロード
+                        </a>
+                        <div id="result-placeholder" class="w-full max-w-[300px] aspect-square bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center text-slate-400 gap-2">
+                            <i data-lucide="image" class="w-12 h-12 opacity-50"></i>
+                            <span class="text-sm font-medium">ここに完成画像が表示されます</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
     </div>
-  );
-}
+
+    <!-- JavaScript ロジック -->
+    <script>
+        // 設定定数
+        const RESOLUTION = { width: 720, height: 1600 };
+        
+        // 状態管理
+        const state = {
+            activeTab: 'crop',
+            params: {
+                count: 16,
+                speed: 1,
+                size: 350,
+                backgroundColor: '#0f172a',
+                pattern: 'heartbeat',
+                yoyo: false,
+                transparent: false,
+                uploadedImage: null,
+                imageTransform: { scale: 1, x: 0, y: 0 }
+            },
+            time: 0,
+            isPlaying: true,
+            isRecording: false,
+            progress: 0,
+            gifUrl: null,
+            statusText: ''
+        };
+
+        // DOM参照
+        const els = {
+            tabCrop: document.getElementById('btn-tab-crop'),
+            tabAnimate: document.getElementById('btn-tab-animate'),
+            panelCrop: document.getElementById('panel-crop'),
+            panelAnimate: document.getElementById('panel-animate'),
+            exportCropUI: document.getElementById('export-crop-ui'),
+            exportAnimateUI: document.getElementById('export-animate-ui'),
+            btnPlayPause: document.getElementById('btn-play-pause'),
+            iconPlay: document.getElementById('icon-play'),
+            iconPause: document.getElementById('icon-pause'),
+            previewContainer: document.getElementById('preview-container'),
+            labelUploadCrop: document.getElementById('label-upload-crop'),
+            textUploadCrop: document.getElementById('text-upload-crop'),
+            labelUploadAnimate: document.getElementById('label-upload-animate'),
+            textUploadAnimate: document.getElementById('text-upload-animate'),
+            btnClearCrop: document.getElementById('btn-clear-image-crop'),
+            btnClearAnimate: document.getElementById('btn-clear-image-animate'),
+            cropZoomUI: document.getElementById('crop-zoom-ui'),
+            inputScaleCrop: document.getElementById('input-scale-crop'),
+            resultContainer: document.getElementById('result-container'),
+            resultPreviewArea: document.getElementById('result-preview-area'),
+            resultImage: document.getElementById('result-image'),
+            btnDownload: document.getElementById('btn-download'),
+            resultPlaceholder: document.getElementById('result-placeholder'),
+            progressSection: document.getElementById('progress-section'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            statusText: document.getElementById('status-text'),
+            exportCropDefault: document.getElementById('export-crop-default'),
+            exportCropLoading: document.getElementById('export-crop-loading'),
+            exportAnimateDefault: document.getElementById('export-animate-default'),
+            exportAnimateLoading: document.getElementById('export-animate-loading'),
+            animateLoadingText: document.getElementById('animate-loading-text'),
+            btnExportCrop: document.getElementById('btn-export-crop'),
+            btnExportAnimate: document.getElementById('btn-export-animate')
+        };
+
+        // UIを状態に合わせて更新する関数
+        function updateUI() {
+            const isCrop = state.activeTab === 'crop';
+            
+            // タブの切り替え
+            if (isCrop) {
+                els.tabCrop.className = 'flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all bg-white text-emerald-600 shadow-sm';
+                els.tabAnimate.className = 'flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all text-slate-500 hover:text-slate-700 hover:bg-white/50';
+            } else {
+                els.tabCrop.className = 'flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all text-slate-500 hover:text-slate-700 hover:bg-white/50';
+                els.tabAnimate.className = 'flex-1 flex justify-center items-center gap-2 py-3 px-4 rounded-lg font-bold transition-all bg-white text-indigo-600 shadow-sm';
+            }
+
+            // パネルの表示切り替え
+            els.panelCrop.classList.toggle('hidden', !isCrop);
+            els.panelAnimate.classList.toggle('hidden', isCrop);
+            els.exportCropUI.classList.toggle('hidden', !isCrop);
+            els.exportAnimateUI.classList.toggle('hidden', isCrop);
+            els.btnPlayPause.classList.toggle('hidden', isCrop);
+
+            // Play/Pause アイコン
+            els.iconPlay.classList.toggle('hidden', state.isPlaying);
+            els.iconPause.classList.toggle('hidden', !state.isPlaying);
+
+            // アップロード状態のUI
+            const hasImage = !!state.params.uploadedImage;
+            
+            if (hasImage) {
+                els.labelUploadCrop.className = 'w-full flex justify-center items-center gap-2 cursor-pointer py-4 px-4 rounded-xl font-bold transition-colors bg-white border-2 border-emerald-500 text-emerald-600';
+                els.textUploadCrop.textContent = '別の画像をアップロード';
+                els.textUploadAnimate.textContent = '画像を変更';
+            } else {
+                els.labelUploadCrop.className = 'w-full flex justify-center items-center gap-2 cursor-pointer py-4 px-4 rounded-xl font-bold transition-colors bg-emerald-600 text-white hover:bg-emerald-700';
+                els.textUploadCrop.textContent = '画像を選ぶ (スマホから)';
+                els.textUploadAnimate.textContent = '画像をアップロード';
+            }
+
+            els.btnClearCrop.classList.toggle('hidden', !hasImage);
+            els.btnClearAnimate.classList.toggle('hidden', !hasImage);
+            els.cropZoomUI.classList.toggle('hidden', !hasImage);
+
+            if (hasImage) {
+                const imgRatio = Math.max(RESOLUTION.width / state.params.uploadedImage.width, RESOLUTION.height / state.params.uploadedImage.height);
+                els.inputScaleCrop.min = imgRatio * 0.2;
+                els.inputScaleCrop.max = imgRatio * 3;
+                els.inputScaleCrop.value = state.params.imageTransform.scale;
+            }
+
+            // プレビューコンテナのスタイル
+            if (state.params.transparent && !isCrop) {
+                els.previewContainer.style.backgroundColor = 'transparent';
+                els.previewContainer.style.backgroundImage = 'linear-gradient(45deg, #334155 25%, transparent 25%), linear-gradient(-45deg, #334155 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #334155 75%), linear-gradient(-45deg, transparent 75%, #334155 75%)';
+                els.previewContainer.style.backgroundSize = '20px 20px';
+                els.previewContainer.style.backgroundPosition = '0 0, 0 10px, 10px -10px, -10px 0px';
+            } else {
+                els.previewContainer.style.backgroundColor = 'black';
+                els.previewContainer.style.backgroundImage = 'none';
+            }
+
+            if (hasImage) {
+                els.previewContainer.classList.add('cursor-move', 'touch-none');
+            } else {
+                els.previewContainer.classList.remove('cursor-move', 'touch-none');
+            }
+
+            // 完成画像のプレビューエリア
+            if (state.gifUrl) {
+                els.resultContainer.classList.remove('opacity-50', 'translate-y-4', 'pointer-events-none');
+                els.resultContainer.classList.add('opacity-100', 'translate-y-0');
+                els.resultImage.src = state.gifUrl;
+                els.resultImage.classList.remove('hidden');
+                
+                els.btnDownload.href = state.gifUrl;
+                els.btnDownload.download = isCrop ? 'wallpaper.jpg' : 'animation.gif';
+                els.btnDownload.className = `flex items-center gap-2 text-white py-3 px-8 rounded-xl font-bold transition-colors shadow-md ${isCrop ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20' : 'bg-slate-900 hover:bg-slate-800 shadow-slate-900/20'}`;
+                els.btnDownload.classList.remove('hidden');
+                els.resultPlaceholder.classList.add('hidden');
+            } else {
+                els.resultContainer.classList.add('opacity-50', 'translate-y-4', 'pointer-events-none');
+                els.resultContainer.classList.remove('opacity-100', 'translate-y-0');
+                els.resultImage.classList.add('hidden');
+                els.btnDownload.classList.add('hidden');
+                els.resultPlaceholder.classList.remove('hidden');
+            }
+
+            if (state.params.transparent && !isCrop) {
+                els.resultPreviewArea.style.backgroundImage = 'linear-gradient(45deg, #334155 25%, transparent 25%), linear-gradient(-45deg, #334155 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #334155 75%), linear-gradient(-45deg, transparent 75%, #334155 75%)';
+                els.resultPreviewArea.style.backgroundSize = '20px 20px';
+                els.resultPreviewArea.style.backgroundPosition = '0 0, 0 10px, 10px -10px, -10px 0px';
+            } else {
+                els.resultPreviewArea.style.backgroundImage = 'none';
+            }
+
+            // プログレスバー
+            if (state.isRecording) {
+                els.progressSection.classList.remove('hidden');
+                els.progressBar.style.width = `${state.progress}%`;
+                els.progressBar.className = isCrop ? 'bg-emerald-600 h-2 rounded-full transition-all duration-300' : 'bg-indigo-600 h-2 rounded-full transition-all duration-300';
+                els.progressText.textContent = !isCrop ? `${state.progress}%` : '';
+                els.statusText.textContent = state.statusText;
+            } else {
+                els.progressSection.classList.add('hidden');
+            }
+
+            // ボタンのローディング状態
+            els.exportCropDefault.classList.toggle('hidden', state.isRecording);
+            els.exportCropLoading.classList.toggle('hidden', !state.isRecording);
+            els.exportAnimateDefault.classList.toggle('hidden', state.isRecording);
+            els.exportAnimateLoading.classList.toggle('hidden', !state.isRecording);
+            if (!isCrop) els.animateLoadingText.textContent = `生成中... ${state.progress}%`;
+
+            // 無効化制御
+            const disabledTargets = [
+                els.tabCrop, els.tabAnimate, els.btnPlayPause,
+                document.getElementById('input-image-crop'), document.getElementById('input-image-animate'),
+                els.btnClearCrop, els.btnClearAnimate,
+                els.inputScaleCrop, document.getElementById('select-pattern'), 
+                document.getElementById('check-yoyo'), document.getElementById('check-transparent'),
+                document.getElementById('input-count'), document.getElementById('input-size'), document.getElementById('input-speed'),
+                els.btnExportCrop, els.btnExportAnimate
+            ];
+            
+            disabledTargets.forEach(el => {
+                if (el) {
+                    el.disabled = state.isRecording;
+                    if (el.type === 'file') {
+                        const label = el.parentElement;
+                        if (state.isRecording) label.classList.add('opacity-50', 'pointer-events-none');
+                        else label.classList.remove('opacity-50', 'pointer-events-none');
+                    }
+                }
+            });
+
+            // クロップ時のエクスポートボタン制御
+            if (isCrop && !hasImage) {
+                els.btnExportCrop.disabled = true;
+            }
+        }
+
+        // SVG生成関数
+        function getSvgStringForFrame(time, params, activeTab) {
+            const { count, size, backgroundColor, pattern, yoyo, transparent, uploadedImage, imageTransform } = params;
+            const { width, height } = RESOLUTION;
+            const cx_center = width / 2;
+            const cy_center = height / 2;
+            
+            const effectivePattern = activeTab === 'crop' ? 'none' : pattern;
+            let elements = [];
+            
+            if (!transparent) {
+                if (uploadedImage) {
+                    const { dataUrl, width: imgW, height: imgH } = uploadedImage;
+                    const { scale, x, y } = imageTransform;
+                    elements.push(`<image href="${dataUrl}" x="0" y="0" width="${imgW}" height="${imgH}" transform="translate(${x}, ${y}) scale(${scale})" />`);
+                    if (effectivePattern !== 'none') {
+                        elements.push(`<rect width="${width}" height="${height}" fill="${backgroundColor}" opacity="0.4" />`);
+                    }
+                } else {
+                    elements.push(`<rect width="${width}" height="${height}" fill="${backgroundColor}" />`);
+                }
+            }
+
+            let renderTime = time;
+            if (yoyo) renderTime = (1 - Math.cos(time)) * Math.PI;
+
+            if (effectivePattern === 'geometric') {
+                for (let i = 0; i < count; i++) {
+                    const offset = (i / count) * Math.PI * 2;
+                    const radius = size * 0.5 + size * Math.sin(renderTime * 2 + offset); 
+                    const cx = cx_center + radius * Math.cos(renderTime + offset);
+                    const cy = cy_center + radius * Math.sin(renderTime + offset);
+                    const hue = (renderTime * 50 + i * (360 / count)) % 360;
+                    const color = `hsl(${hue}, 80%, 65%)`;
+
+                    elements.push(`<line x1="${cx_center}" y1="${cy_center}" x2="${cx}" y2="${cy}" stroke="${color}" stroke-width="3" opacity="0.4" />`);
+                    elements.push(`<circle cx="${cx}" cy="${cy}" r="16" fill="${color}" opacity="0.9" />`);
+                    elements.push(`<circle cx="${cx_center + (radius * 0.5) * Math.cos(renderTime - offset)}" cy="${cy_center + (radius * 0.5) * Math.sin(renderTime - offset)}" r="8" fill="${color}" opacity="0.6" />`);
+                }
+            } else if (effectivePattern === 'crazy_emojis') {
+                const emojis = ['🤪', '🛸', '💩', '🌭', '🦍', '💃', '👀', '🍌', '👻', '🐙', '👾', '🌈'];
+                for (let i = 0; i < count; i++) {
+                    const emoji = emojis[i % emojis.length];
+                    const freqX = (i % 3) + 1;
+                    const freqY = (i % 4) + 1;
+                    const phaseX = (i / count) * Math.PI * 2;
+                    const phaseY = ((i + 1) / count) * Math.PI * 2;
+                    const spreadX = size * 1.2;
+                    const spreadY = size * 1.8;
+                    const cx = cx_center + spreadX * Math.sin(renderTime * freqX + phaseX);
+                    const cy = cy_center + spreadY * Math.cos(renderTime * freqY + phaseY);
+                    const baseFontSize = Math.max(30, size / 5);
+                    const fontSize = baseFontSize + (baseFontSize * 0.3) * Math.sin(renderTime * 3 + i);
+                    const rotation = Math.sin(renderTime * 2 + phaseX) * 45;
+
+                    elements.push(`<text x="${cx}" y="${cy}" font-size="${fontSize}" text-anchor="middle" dominant-baseline="central" transform="rotate(${rotation}, ${cx}, ${cy})">${emoji}</text>`);
+                }
+            } else if (effectivePattern === 'wiggly_tentacles') {
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2;
+                    const hue = (renderTime * 100 + i * (360 / count)) % 360;
+                    const color = `hsl(${hue}, 80%, 65%)`;
+                    const length = size * 1.5;
+                    const tipAngle = angle + Math.sin(renderTime * 3 + i) * 0.5;
+                    const endX = cx_center + length * Math.cos(tipAngle);
+                    const endY = cy_center + length * Math.sin(tipAngle);
+                    const cp1X = cx_center + (length * 0.4) * Math.cos(angle + Math.sin(renderTime * 4 + i));
+                    const cp1Y = cy_center + (length * 0.4) * Math.sin(angle + Math.cos(renderTime * 4 + i));
+                    const cp2X = cx_center + (length * 0.8) * Math.cos(angle - Math.sin(renderTime * 5 + i));
+                    const cp2Y = cy_center + (length * 0.8) * Math.sin(angle - Math.cos(renderTime * 5 + i));
+                    const thickness = Math.max(8, size / 10);
+
+                    elements.push(`<path d="M ${cx_center} ${cy_center} C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${endX} ${endY}" fill="none" stroke="${color}" stroke-width="${thickness}" stroke-linecap="round" opacity="0.9" />`);
+                    const eyeRadius = Math.max(12, thickness * 0.8);
+                    const pupilRadius = eyeRadius * 0.4;
+                    const pupilOffsetX = Math.cos(renderTime * 6 + i * 2) * (eyeRadius - pupilRadius - 2);
+                    const pupilOffsetY = Math.sin(renderTime * 6 + i * 2) * (eyeRadius - pupilRadius - 2);
+                    elements.push(`<circle cx="${endX}" cy="${endY}" r="${eyeRadius}" fill="white" />`);
+                    elements.push(`<circle cx="${endX + pupilOffsetX}" cy="${endY + pupilOffsetY}" r="${pupilRadius}" fill="#0f172a" />`);
+                }
+            } else if (effectivePattern === 'expanding_ripples') {
+                const rippleCount = Math.max(3, Math.floor(count / 2));
+                for (let i = 0; i < rippleCount; i++) {
+                    const phaseOffset = (i / rippleCount) * Math.PI * 2;
+                    let phase = (renderTime * 2 + phaseOffset) % (Math.PI * 2);
+                    const progress = phase / (Math.PI * 2);
+                    const r = size * progress * 1.5;
+                    const opacity = Math.max(0, 1 - progress);
+                    const strokeWidth = size * 0.02 + progress * size * 0.05;
+                    elements.push(`<circle cx="${cx_center}" cy="${cy_center}" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="${strokeWidth}" opacity="${opacity}" />`);
+                }
+            } else if (effectivePattern === 'loading_dots') {
+                const dots = 3;
+                const dotSpacing = size * 0.5;
+                const startX = cx_center - dotSpacing;
+                const baseColor = transparent ? '#334155' : '#e2e8f0'; 
+                for (let i = 0; i < dots; i++) {
+                    const delay = i * 0.5;
+                    const jumpProgress = (renderTime * 3 - delay) % (Math.PI * 2);
+                    let jump = 0;
+                    if (jumpProgress > 0 && jumpProgress < Math.PI) jump = Math.sin(jumpProgress);
+                    const cx = startX + i * dotSpacing;
+                    const cy = cy_center - jump * (size * 0.6);
+                    const dotRadius = size * 0.15;
+                    elements.push(`<circle cx="${cx}" cy="${cy}" r="${dotRadius}" fill="${baseColor}" />`);
+                }
+            } else if (effectivePattern === 'heartbeat') {
+                const t = (renderTime % (Math.PI * 2));
+                let scale = 1;
+                if (t < 0.8) scale = 1 + Math.sin(t * (Math.PI / 0.8)) * 0.25;
+                else if (t > 1.0 && t < 1.6) scale = 1 + Math.sin((t - 1.0) * (Math.PI / 0.6)) * 0.15;
+                const heartScale = size * 0.03 * scale;
+                elements.push(`<g transform="translate(${cx_center}, ${cy_center}) scale(${heartScale})"><path d="M 0 -15 C 0 -15 -15 -30 -30 -15 C -45 0 -15 30 0 50 C 15 30 45 0 30 -15 C 15 -30 0 -15 0 -15 Z" fill="#ef4444" /></g>`);
+            } else if (effectivePattern === 'character_breathing') {
+                const breathY = Math.sin(renderTime * 2) * (size * 0.08); 
+                const isBlinking = (renderTime > 1.0 && renderTime < 1.3) || (renderTime > 4.5 && renderTime < 4.7);
+                const eyeHeight = isBlinking ? 2 : size * 0.12;
+                const eyeWidth = size * 0.08;
+                const faceColor = '#fcd34d'; 
+                const featureColor = '#1e293b';
+                elements.push(`<g transform="translate(${cx_center}, ${cy_center + breathY})">
+                    <circle cx="0" cy="0" r="${size * 0.6}" fill="${faceColor}" />
+                    <ellipse cx="-${size * 0.3}" cy="${size * 0.1}" rx="${size * 0.1}" ry="${size * 0.06}" fill="#fbbf24" opacity="0.6"/>
+                    <ellipse cx="${size * 0.3}" cy="${size * 0.1}" rx="${size * 0.1}" ry="${size * 0.06}" fill="#fbbf24" opacity="0.6"/>
+                    <ellipse cx="-${size * 0.25}" cy="-${size * 0.1}" rx="${eyeWidth}" ry="${eyeHeight}" fill="${featureColor}" />
+                    <ellipse cx="${size * 0.25}" cy="-${size * 0.1}" rx="${eyeWidth}" ry="${eyeHeight}" fill="${featureColor}" />
+                    <path d="M -${size * 0.15} ${size * 0.15} Q 0 ${size * 0.35} ${size * 0.15} ${size * 0.15}" fill="none" stroke="${featureColor}" stroke-width="${size * 0.03}" stroke-linecap="round" />
+                </g>`);
+            }
+            return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="100%" height="100%">${elements.join('')}</svg>`;
+        }
+
+        function updatePreview() {
+            els.previewContainer.innerHTML = getSvgStringForFrame(state.time, state.params, state.activeTab);
+        }
+
+        // アニメーションループ
+        let lastTime = performance.now();
+        function loop(currentTime) {
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
+            if (state.isPlaying && !state.isRecording && state.activeTab === 'animate') {
+                const baseSpeed = Math.PI; 
+                state.time += deltaTime * baseSpeed * state.params.speed;
+                if (state.time > Math.PI * 2) state.time -= Math.PI * 2;
+                updatePreview();
+            }
+            requestAnimationFrame(loop);
+        }
+        requestAnimationFrame(loop);
+
+        // イベントリスナーの登録
+        els.tabCrop.addEventListener('click', () => {
+            if (state.isRecording) return;
+            state.activeTab = 'crop';
+            state.gifUrl = null;
+            updateUI(); updatePreview();
+        });
+        els.tabAnimate.addEventListener('click', () => {
+            if (state.isRecording) return;
+            state.activeTab = 'animate';
+            state.gifUrl = null;
+            updateUI(); updatePreview();
+        });
+
+        els.btnPlayPause.addEventListener('click', () => {
+            state.isPlaying = !state.isPlaying;
+            updateUI();
+        });
+
+        // ドラッグ操作
+        let isDragging = false;
+        let startPos = { x: 0, y: 0 };
+        els.previewContainer.addEventListener('pointerdown', (e) => {
+            if (!state.params.uploadedImage || state.isRecording) return;
+            isDragging = true;
+            startPos = { x: e.clientX, y: e.clientY };
+            els.previewContainer.setPointerCapture(e.pointerId);
+        });
+        els.previewContainer.addEventListener('pointermove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - startPos.x;
+            const dy = e.clientY - startPos.y;
+            startPos = { x: e.clientX, y: e.clientY };
+            const rect = els.previewContainer.getBoundingClientRect();
+            const displayRatio = RESOLUTION.width / rect.width;
+            state.params.imageTransform.x += dx * displayRatio;
+            state.params.imageTransform.y += dy * displayRatio;
+            updatePreview();
+        });
+        const endDrag = (e) => {
+            if (isDragging) {
+                isDragging = false;
+                els.previewContainer.releasePointerCapture(e.pointerId);
+            }
+        };
+        els.previewContainer.addEventListener('pointerup', endDrag);
+        els.previewContainer.addEventListener('pointercancel', endDrag);
+
+        // 画像アップロード
+        const handleImageUpload = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const img = new Image();
+            const objectUrl = URL.createObjectURL(file);
+            img.onload = () => {
+                const MAX_SIZE = 2000;
+                let targetWidth = img.width;
+                let targetHeight = img.height;
+                if (targetWidth > MAX_SIZE || targetHeight > MAX_SIZE) {
+                    if (targetWidth > targetHeight) { targetHeight *= MAX_SIZE / targetWidth; targetWidth = MAX_SIZE; } 
+                    else { targetWidth *= MAX_SIZE / targetHeight; targetHeight = MAX_SIZE; }
+                }
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = targetWidth; canvas.height = targetHeight;
+                ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+                
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                const initialScale = Math.max(RESOLUTION.width / targetWidth, RESOLUTION.height / targetHeight);
+                const initialX = (RESOLUTION.width - targetWidth * initialScale) / 2;
+                const initialY = (RESOLUTION.height - targetHeight * initialScale) / 2;
+
+                state.params.uploadedImage = { dataUrl, width: targetWidth, height: targetHeight };
+                state.params.imageTransform = { scale: initialScale, x: initialX, y: initialY };
+                URL.revokeObjectURL(objectUrl);
+                updateUI(); updatePreview();
+            };
+            img.src = objectUrl;
+            e.target.value = '';
+        };
+        document.querySelectorAll('.input-image').forEach(input => input.addEventListener('change', handleImageUpload));
+
+        // 画像クリア
+        const clearImage = () => {
+            state.params.uploadedImage = null;
+            state.params.imageTransform = { scale: 1, x: 0, y: 0 };
+            updateUI(); updatePreview();
+        };
+        els.btnClearCrop.addEventListener('click', clearImage);
+        els.btnClearAnimate.addEventListener('click', clearImage);
+
+        // スケール変更
+        els.inputScaleCrop.addEventListener('input', (e) => {
+            const newScale = parseFloat(e.target.value);
+            const cx = (RESOLUTION.width / 2 - state.params.imageTransform.x) / state.params.imageTransform.scale;
+            const cy = (RESOLUTION.height / 2 - state.params.imageTransform.y) / state.params.imageTransform.scale;
+            state.params.imageTransform.scale = newScale;
+            state.params.imageTransform.x = RESOLUTION.width / 2 - cx * newScale;
+            state.params.imageTransform.y = RESOLUTION.height / 2 - cy * newScale;
+            updatePreview();
+        });
+
+        // パラメータ変更
+        ['count', 'size', 'speed'].forEach(key => {
+            document.getElementById(`input-${key}`).addEventListener('input', (e) => {
+                state.params[key] = parseFloat(e.target.value);
+                document.getElementById(`label-${key}`).textContent = key === 'speed' ? `${state.params[key].toFixed(1)}x` : state.params[key];
+                updatePreview();
+            });
+        });
+        ['yoyo', 'transparent'].forEach(key => {
+            document.getElementById(`check-${key}`).addEventListener('change', (e) => {
+                state.params[key] = e.target.checked;
+                updateUI(); updatePreview();
+            });
+        });
+        document.getElementById('select-pattern').addEventListener('change', (e) => {
+            state.params.pattern = e.target.value;
+            updatePreview();
+        });
+
+        // JPEGエクスポート
+        els.btnExportCrop.addEventListener('click', async () => {
+            state.isRecording = true;
+            state.statusText = 'JPEGを生成中...';
+            state.gifUrl = null;
+            updateUI();
+
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = RESOLUTION.width; canvas.height = RESOLUTION.height;
+                const ctx = canvas.getContext('2d');
+                const svgString = getSvgStringForFrame(0, state.params, 'crop'); 
+                
+                const img = new Image();
+                const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(svgBlob);
+
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve; img.onerror = reject; img.src = url;
+                });
+
+                ctx.clearRect(0, 0, RESOLUTION.width, RESOLUTION.height);
+                ctx.drawImage(img, 0, 0, RESOLUTION.width, RESOLUTION.height);
+
+                state.gifUrl = canvas.toDataURL('image/jpeg', 0.95);
+                state.isRecording = false;
+                state.statusText = '完成しました！';
+                URL.revokeObjectURL(url);
+                updateUI();
+            } catch (error) {
+                console.error(error);
+                state.statusText = 'エラーが発生しました';
+                state.isRecording = false;
+                updateUI();
+            }
+        });
+
+        // GIFエクスポート
+        els.btnExportAnimate.addEventListener('click', async () => {
+            state.isRecording = true;
+            state.progress = 0;
+            state.statusText = '準備中...';
+            state.gifUrl = null;
+            updateUI();
+
+            try {
+                const workerRes = await fetch('https://cdn.jsdelivr.net/npm/gif.js.optimized@1.0.1/dist/gif.worker.js');
+                const workerText = await workerRes.text();
+                const workerBlob = new Blob([workerText], { type: 'application/javascript' });
+                const workerUrl = URL.createObjectURL(workerBlob);
+
+                const chromaKeyColor = '#00FF00';
+                const gif = new window.GIF({
+                    workers: 2, quality: 10,
+                    width: RESOLUTION.width, height: RESOLUTION.height,
+                    workerScript: workerUrl,
+                    transparent: state.params.transparent ? chromaKeyColor : null,
+                });
+
+                const canvas = document.createElement('canvas');
+                canvas.width = RESOLUTION.width; canvas.height = RESOLUTION.height;
+                const ctx = canvas.getContext('2d');
+
+                const duration = 2 / state.params.speed;
+                let fps = 30;
+                if (duration > 5) fps = 15;
+                if (duration > 10) fps = 10;
+                const totalFrames = Math.round(fps * duration);
+
+                state.statusText = 'フレームを描画中...';
+                updateUI();
+
+                for (let i = 0; i < totalFrames; i++) {
+                    const frameTime = (i / totalFrames) * Math.PI * 2;
+                    const svgString = getSvgStringForFrame(frameTime, state.params, 'animate');
+                    
+                    const img = new Image();
+                    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+                    const url = URL.createObjectURL(svgBlob);
+
+                    await new Promise((resolve, reject) => {
+                        img.onload = resolve; img.onerror = reject; img.src = url;
+                    });
+
+                    if (state.params.transparent) {
+                        ctx.fillStyle = chromaKeyColor;
+                        ctx.fillRect(0, 0, RESOLUTION.width, RESOLUTION.height);
+                    } else {
+                        ctx.clearRect(0, 0, RESOLUTION.width, RESOLUTION.height);
+                    }
+                    ctx.drawImage(img, 0, 0, RESOLUTION.width, RESOLUTION.height);
+                    gif.addFrame(ctx, { copy: true, delay: 1000 / fps });
+                    URL.revokeObjectURL(url);
+                    
+                    state.progress = Math.round(((i + 1) / totalFrames) * 40);
+                    updateUI();
+                }
+
+                state.statusText = 'GIFをエンコード中...';
+                updateUI();
+
+                gif.on('progress', (p) => {
+                    state.progress = 40 + Math.round(p * 60);
+                    updateUI();
+                });
+
+                gif.on('finished', (blob) => {
+                    state.gifUrl = URL.createObjectURL(blob);
+                    state.isRecording = false;
+                    state.statusText = '完成しました！';
+                    updateUI();
+                });
+
+                gif.render();
+
+            } catch (error) {
+                console.error(error);
+                state.statusText = 'エラーが発生しました';
+                state.isRecording = false;
+                updateUI();
+            }
+        });
+
+        // 初期化
+        updateUI();
+        updatePreview();
+        lucide.createIcons();
+    </script>
+</body>
+</html>
